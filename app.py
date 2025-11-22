@@ -38,11 +38,21 @@ def check_password():
             st.markdown("### 비밀번호를 입력하세요")
             password = st.text_input("비밀번호", type="password", key="password_input")
             
-            # 기본 비밀번호 (실제 사용 시 환경 변수나 secrets로 관리)
-            default_password = st.secrets.get("ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin123"))
+            # 기본 비밀번호 (secrets에서 읽기)
+            try:
+                # Streamlit secrets에서 비밀번호 읽기
+                if hasattr(st.secrets, "ADMIN_PASSWORD"):
+                    default_password = st.secrets["ADMIN_PASSWORD"]
+                else:
+                    # secrets에 없으면 환경 변수에서 가져오기
+                    default_password = os.getenv("ADMIN_PASSWORD", "1234")
+            except (KeyError, AttributeError):
+                # secrets 로드 실패 시 환경 변수 또는 기본값 사용
+                default_password = os.getenv("ADMIN_PASSWORD", "1234")
             
             if st.button("로그인", type="primary", use_container_width=True):
-                if password == default_password:
+                # 입력한 비밀번호와 저장된 비밀번호 비교 (문자열 비교)
+                if str(password) == str(default_password):
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
