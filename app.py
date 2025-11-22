@@ -187,41 +187,11 @@ def main():
         else:
             st.warning("⚠️ AI 기능을 사용하려면 OPENAI_API_KEY를 설정해주세요. (secrets 또는 환경 변수)")
         
-        # AI 개선 버튼 (form 밖)
-        if openai_client:
-            st.markdown("---")
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                temp_content = st.text_area(
-                    "📝 상담 내용을 입력하고 AI로 개선해보세요",
-                    value=st.session_state.get('temp_consult_content', ''),
-                    height=100,
-                    placeholder="간단한 상담 내용을 입력하세요.\n예: 학생이 수업 중 집중력이 부족하고 산만함",
-                    key="temp_content_for_ai"
-                )
-                st.session_state.temp_consult_content = temp_content
-            with col2:
-                st.markdown("<br>", unsafe_allow_html=True)  # 정렬을 위한 공간
-                if st.button("✨ AI로 개선하기", use_container_width=True, type="secondary"):
-                    if temp_content.strip():
-                        with st.spinner("🤖 AI가 상담 내용을 개선하고 있습니다... 잠시만 기다려주세요."):
-                            improved_text = improve_text_with_ai(openai_client, temp_content)
-                            if improved_text:
-                                st.session_state.improved_consult_content = improved_text
-                                st.session_state.show_improved = True
-                                st.session_state.temp_consult_content = improved_text  # 개선된 내용으로 업데이트
-                                st.success("✅ AI 개선이 완료되었습니다!")
-                                st.rerun()
-                            else:
-                                st.error("❌ AI 개선 중 오류가 발생했습니다.")
-                    else:
-                        st.warning("⚠️ 상담 내용을 먼저 입력해주세요.")
-            st.markdown("---")
-        
-        # AI 개선된 내용 표시
+        # AI 개선된 내용 표시 (form 위에)
         if 'show_improved' in st.session_state and st.session_state.show_improved and 'improved_consult_content' in st.session_state:
             st.markdown("---")
-            st.markdown("### ✨ AI 개선된 상담 내용")
+            st.success("✅ AI가 상담 내용을 개선했습니다!")
+            st.markdown("**✨ AI 개선된 상담 내용:**")
             st.text_area(
                 "개선된 내용",
                 value=st.session_state.improved_consult_content,
@@ -244,6 +214,23 @@ def main():
                     st.rerun()
             st.markdown("---")
         
+        # 상담 내용 AI 개선 (form 밖에서 처리)
+        if 'ai_improve_request' in st.session_state and st.session_state.ai_improve_request:
+            content_to_improve = st.session_state.get('content_for_ai', '')
+            if content_to_improve.strip() and openai_client:
+                with st.spinner("🤖 AI가 상담 내용을 개선하고 있습니다... 잠시만 기다려주세요."):
+                    improved_text = improve_text_with_ai(openai_client, content_to_improve)
+                    if improved_text:
+                        st.session_state.improved_consult_content = improved_text
+                        st.session_state.show_improved = True
+                        st.session_state.consult_content_to_use = improved_text
+                        st.success("✅ AI 개선이 완료되었습니다!")
+                    else:
+                        st.error("❌ AI 개선 중 오류가 발생했습니다.")
+            else:
+                st.warning("⚠️ 상담 내용을 먼저 입력해주세요.")
+            st.session_state.ai_improve_request = False
+        
         with st.form("상담기록 작성 폼", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
@@ -263,13 +250,30 @@ def main():
                 
                 consult_content = st.text_area(
                     "상담 내용 *", 
-                    height=150, 
+                    height=120, 
                     value=initial_content,
                     placeholder="상담 내용을 간단히 입력하세요.\n예: 학생이 수업 중 집중력이 부족함",
                     key="consult_content_input"
                 )
                 
-                # AI 개선 버튼 (form 외부에서 처리)
+                # AI 개선 버튼 (항상 표시, API 키 없으면 비활성화)
+                st.markdown("")  # 간격
+                ai_improve_clicked = st.form_submit_button(
+                    "✨ AI로 개선하기" if openai_client else "✨ AI로 개선하기 (API 키 필요)",
+                    use_container_width=False,
+                    key="ai_improve_btn",
+                    disabled=not openai_client
+                )
+                if ai_improve_clicked and openai_client:
+                    if consult_content and consult_content.strip():
+                        st.session_state.content_for_ai = consult_content
+                        st.session_state.ai_improve_request = True
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 상담 내용을 먼저 입력해주세요.")
+                elif ai_improve_clicked and not openai_client:
+                    st.warning("⚠️ AI 기능을 사용하려면 OPENAI_API_KEY를 설정해주세요.")
+                
                 notes = st.text_area("비고", height=100, placeholder="추가 메모사항이 있으면 입력하세요...")
             
             submitted = st.form_submit_button("💾 저장하기", type="primary", use_container_width=True)
