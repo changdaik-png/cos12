@@ -19,29 +19,49 @@ st.set_page_config(
 )
 
 # OpenAI 클라이언트 초기화 (선택적)
-@st.cache_resource
+# 캐시를 사용하지 않음 (secrets 변경 시 즉시 반영되도록)
 def init_openai():
     """OpenAI 클라이언트 초기화"""
     if not OPENAI_AVAILABLE:
         return None
     
-    # 환경 변수 우선 확인
+    api_key = None
+    
+    # 1. 환경 변수에서 확인 (서버 환경)
     api_key = os.getenv("OPENAI_API_KEY", "")
     
-    # 환경 변수가 없으면 Streamlit secrets에서 확인
+    # 2. Streamlit secrets에서 확인 (로컬 개발 및 Cloud)
     if not api_key:
         try:
-            if "OPENAI_API_KEY" in st.secrets:
-                api_key = st.secrets["OPENAI_API_KEY"]
-        except (KeyError, AttributeError, FileNotFoundError):
-            pass
+            # Streamlit secrets 접근 방식
+            if hasattr(st, 'secrets'):
+                # st.secrets는 dict-like 또는 object-like일 수 있음
+                if isinstance(st.secrets, dict):
+                    api_key = st.secrets.get("OPENAI_API_KEY", "")
+                else:
+                    # object-like 접근 (st.secrets.OPENAI_API_KEY)
+                    try:
+                        api_key = getattr(st.secrets, "OPENAI_API_KEY", "")
+                    except:
+                        api_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st.secrets, 'get') else ""
+        except (KeyError, AttributeError, FileNotFoundError, TypeError) as e:
+            # 디버깅을 위해 오류는 무시하되 로그는 남기지 않음
+            api_key = ""
     
-    if not api_key:
+    # API 키가 없으면 None 반환
+    if not api_key or not api_key.strip():
         return None
     
+    # OpenAI 클라이언트 생성
     try:
-        return OpenAI(api_key=api_key)
-    except Exception:
+        client = OpenAI(api_key=api_key.strip())
+        # 간단한 유효성 검사 (API 키 형식 확인)
+        if api_key.startswith("sk-"):
+            return client
+        else:
+            return None
+    except Exception as e:
+        # 오류 발생 시 None 반환
         return None
 
 # AI 텍스트 개선 함수
@@ -182,10 +202,43 @@ def main():
         
         # OpenAI 클라이언트 초기화
         openai_client = init_openai()
+        
+        # 디버깅 정보 (개발 중에만 표시)
+        with st.expander("🔧 AI 설정 상태 (디버깅)", expanded=False):
+            st.write(f"OpenAI 라이브러리 설치: {'✅' if OPENAI_AVAILABLE else '❌'}")
+            st.write(f"OpenAI 클라이언트 초기화: {'✅' if openai_client else '❌'}")
+            
+            # API 키 존재 여부 확인 (키 값은 보이지 않도록)
+            try:
+                env_key = os.getenv("OPENAI_API_KEY", "")
+                secrets_key = ""
+                try:
+                    if hasattr(st, 'secrets'):
+                        if isinstance(st.secrets, dict):
+                            secrets_key = st.secrets.get("OPENAI_API_KEY", "")
+                        else:
+                            secrets_key = getattr(st.secrets, "OPENAI_API_KEY", "")
+                except:
+                    pass
+                
+                has_env_key = bool(env_key and env_key.strip())
+                has_secrets_key = bool(secrets_key and secrets_key.strip())
+                
+                st.write(f"환경 변수 OPENAI_API_KEY: {'✅' if has_env_key else '❌'}")
+                st.write(f"Secrets OPENAI_API_KEY: {'✅' if has_secrets_key else '❌'}")
+                
+                if has_env_key:
+                    st.write(f"API 키 시작 부분: `{env_key[:7]}...`")
+                elif has_secrets_key:
+                    st.write(f"API 키 시작 부분: `{secrets_key[:7]}...`")
+                    
+            except Exception as e:
+                st.write(f"오류: {str(e)}")
+        
         if openai_client:
-            st.info("✨ AI 개선 기능이 활성화되었습니다!")
+            st.success("✨ AI 개선 기능이 활성화되었습니다!")
         else:
-            st.warning("⚠️ AI 기능을 사용하려면 OPENAI_API_KEY를 설정해주세요. (secrets 또는 환경 변수)")
+            st.warning("⚠️ AI 기능을 사용하려면 OPENAI_API_KEY를 설정해주세요. (secrets 또는 환경 변수)\n위의 'AI 설정 상태'를 펼쳐서 확인해보세요.")
         
         # AI 개선된 내용 표시 (form 위에)
         if 'show_improved' in st.session_state and st.session_state.show_improved and 'improved_consult_content' in st.session_state:
