@@ -4,6 +4,13 @@ from datetime import datetime
 import os
 from typing import Optional
 
+# OpenAI API (선택적)
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 # 페이지 설정
 st.set_page_config(
     page_title="초등학교 상담기록부",
@@ -11,12 +18,85 @@ st.set_page_config(
     layout="wide"
 )
 
+# OpenAI 클라이언트 초기화 (선택적)
+@st.cache_resource
+def init_openai():
+    """OpenAI 클라이언트 초기화"""
+    if not OPENAI_AVAILABLE:
+        return None
+    
+    # 환경 변수 우선 확인
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    
+    # 환경 변수가 없으면 Streamlit secrets에서 확인
+    if not api_key:
+        try:
+            if "OPENAI_API_KEY" in st.secrets:
+                api_key = st.secrets["OPENAI_API_KEY"]
+        except (KeyError, AttributeError, FileNotFoundError):
+            pass
+    
+    if not api_key:
+        return None
+    
+    try:
+        return OpenAI(api_key=api_key)
+    except Exception:
+        return None
+
+# AI 텍스트 개선 함수
+def improve_text_with_ai(client, text: str) -> Optional[str]:
+    """ChatGPT API를 사용하여 텍스트를 더 정교하게 개선"""
+    if not client or not text.strip():
+        return None
+    
+    try:
+        prompt = f"""초등학교 상담 기록의 상담 내용을 더 정교하고 상세하게 작성해주세요.
+다음은 간단히 작성된 상담 내용입니다:
+"{text}"
+
+요구사항:
+- 상담 내용을 더 구체적이고 상세하게 작성
+- 전문적이면서도 이해하기 쉬운 문장으로 표현
+- 초등학교 상담 기록에 적합한 톤으로 작성
+- 원본 내용의 핵심은 유지하면서 더 풍부하게 설명
+- 2-3문단 정도의 적절한 분량으로 작성
+
+개선된 상담 내용:"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # 또는 "gpt-3.5-turbo" 사용 가능
+            messages=[
+                {"role": "system", "content": "당신은 초등학교 상담 기록을 전문적으로 작성하는 교육 전문가입니다."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        improved_text = response.choices[0].message.content.strip()
+        return improved_text
+    except Exception as e:
+        st.error(f"AI 개선 중 오류 발생: {str(e)}")
+        return None
+
 # Supabase 클라이언트 초기화
 @st.cache_resource
 def init_supabase():
     """Supabase 클라이언트 초기화"""
-    url = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
-    key = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
+    # 환경 변수를 우선적으로 확인 (서버 환경에 적합)
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_KEY", "")
+    
+    # 환경 변수가 없으면 Streamlit secrets에서 확인
+    if not url or not key:
+        try:
+            if "SUPABASE_URL" in st.secrets:
+                url = st.secrets["SUPABASE_URL"] if not url else url
+            if "SUPABASE_KEY" in st.secrets:
+                key = st.secrets["SUPABASE_KEY"] if not key else key
+        except (KeyError, AttributeError, FileNotFoundError):
+            pass
     
     if not url or not key:
         st.error("⚠️ Supabase 설정이 필요합니다. 환경 변수 또는 Streamlit secrets에 SUPABASE_URL과 SUPABASE_KEY를 설정해주세요.")
@@ -38,17 +118,29 @@ def check_password():
             st.markdown("### 비밀번호를 입력하세요")
             password = st.text_input("비밀번호", type="password", key="password_input")
             
-            # 기본 비밀번호 (secrets에서 읽기)
+            # 기본 비밀번호 읽기 (서버 환경 고려)
+            # 우선순위: 환경 변수 > Streamlit secrets > 기본값
+            default_password = "1234"  # 기본값
+            
             try:
-                # Streamlit secrets에서 비밀번호 읽기
-                if hasattr(st.secrets, "ADMIN_PASSWORD"):
-                    default_password = st.secrets["ADMIN_PASSWORD"]
+                # 1. 환경 변수에서 먼저 확인 (서버 환경에서 주로 사용)
+                env_password = os.getenv("ADMIN_PASSWORD")
+                if env_password:
+                    default_password = env_password
                 else:
-                    # secrets에 없으면 환경 변수에서 가져오기
-                    default_password = os.getenv("ADMIN_PASSWORD", "1234")
-            except (KeyError, AttributeError):
-                # secrets 로드 실패 시 환경 변수 또는 기본값 사용
-                default_password = os.getenv("ADMIN_PASSWORD", "1234")
+                    # 2. Streamlit secrets에서 확인 (로컬 개발 환경)
+                    try:
+                        # Streamlit Cloud나 로컬 secrets에서 읽기
+                        if "ADMIN_PASSWORD" in st.secrets:
+                            default_password = st.secrets["ADMIN_PASSWORD"]
+                        elif hasattr(st.secrets, "ADMIN_PASSWORD"):
+                            default_password = st.secrets.ADMIN_PASSWORD
+                    except (KeyError, AttributeError, FileNotFoundError):
+                        # secrets 파일이 없어도 계속 진행
+                        pass
+            except Exception as e:
+                # 모든 방법 실패 시 기본값 사용
+                pass
             
             if st.button("로그인", type="primary", use_container_width=True):
                 # 입력한 비밀번호와 저장된 비밀번호 비교 (문자열 비교)
@@ -88,6 +180,70 @@ def main():
     if menu == "📝 상담기록 작성":
         st.header("📝 상담기록 작성")
         
+        # OpenAI 클라이언트 초기화
+        openai_client = init_openai()
+        if openai_client:
+            st.info("✨ AI 개선 기능이 활성화되었습니다!")
+        else:
+            st.warning("⚠️ AI 기능을 사용하려면 OPENAI_API_KEY를 설정해주세요. (secrets 또는 환경 변수)")
+        
+        # AI 개선 버튼 (form 밖)
+        if openai_client:
+            st.markdown("---")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                temp_content = st.text_area(
+                    "📝 상담 내용을 입력하고 AI로 개선해보세요",
+                    value=st.session_state.get('temp_consult_content', ''),
+                    height=100,
+                    placeholder="간단한 상담 내용을 입력하세요.\n예: 학생이 수업 중 집중력이 부족하고 산만함",
+                    key="temp_content_for_ai"
+                )
+                st.session_state.temp_consult_content = temp_content
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # 정렬을 위한 공간
+                if st.button("✨ AI로 개선하기", use_container_width=True, type="secondary"):
+                    if temp_content.strip():
+                        with st.spinner("🤖 AI가 상담 내용을 개선하고 있습니다... 잠시만 기다려주세요."):
+                            improved_text = improve_text_with_ai(openai_client, temp_content)
+                            if improved_text:
+                                st.session_state.improved_consult_content = improved_text
+                                st.session_state.show_improved = True
+                                st.session_state.temp_consult_content = improved_text  # 개선된 내용으로 업데이트
+                                st.success("✅ AI 개선이 완료되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("❌ AI 개선 중 오류가 발생했습니다.")
+                    else:
+                        st.warning("⚠️ 상담 내용을 먼저 입력해주세요.")
+            st.markdown("---")
+        
+        # AI 개선된 내용 표시
+        if 'show_improved' in st.session_state and st.session_state.show_improved and 'improved_consult_content' in st.session_state:
+            st.markdown("---")
+            st.markdown("### ✨ AI 개선된 상담 내용")
+            st.text_area(
+                "개선된 내용",
+                value=st.session_state.improved_consult_content,
+                height=150,
+                key="improved_content_display",
+                disabled=True
+            )
+            col_use, col_ignore = st.columns(2)
+            with col_use:
+                if st.button("✅ 이 내용 사용하기", use_container_width=True, key="use_improved"):
+                    st.session_state.consult_content_to_use = st.session_state.improved_consult_content
+                    st.session_state.show_improved = False
+                    del st.session_state.improved_consult_content
+                    st.rerun()
+            with col_ignore:
+                if st.button("❌ 무시하기", use_container_width=True, key="ignore_improved"):
+                    st.session_state.show_improved = False
+                    if 'improved_consult_content' in st.session_state:
+                        del st.session_state.improved_consult_content
+                    st.rerun()
+            st.markdown("---")
+        
         with st.form("상담기록 작성 폼", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
@@ -99,10 +255,24 @@ def main():
             
             with col2:
                 consult_date = st.date_input("상담 일자 *", value=datetime.now().date())
-                consult_content = st.text_area("상담 내용 *", height=150, placeholder="상담 내용을 입력하세요...")
+                
+                # 상담 내용 입력 (AI 개선된 내용이 있으면 사용)
+                initial_content = st.session_state.get('consult_content_to_use', '')
+                if 'consult_content_to_use' in st.session_state:
+                    del st.session_state.consult_content_to_use
+                
+                consult_content = st.text_area(
+                    "상담 내용 *", 
+                    height=150, 
+                    value=initial_content,
+                    placeholder="상담 내용을 간단히 입력하세요.\n예: 학생이 수업 중 집중력이 부족함",
+                    key="consult_content_input"
+                )
+                
+                # AI 개선 버튼 (form 외부에서 처리)
                 notes = st.text_area("비고", height=100, placeholder="추가 메모사항이 있으면 입력하세요...")
             
-            submitted = st.form_submit_button("저장하기", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("💾 저장하기", type="primary", use_container_width=True)
             
             if submitted:
                 if not all([student_name, counselor, consult_content]):
